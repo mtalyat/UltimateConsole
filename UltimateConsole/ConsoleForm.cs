@@ -12,7 +12,7 @@ namespace UltimateConsole
 {
     partial class ConsoleForm : Form
     {
-        public bool Running { get; set; } = true;
+        public bool Running { get; set; } = false;
 
         public ConsoleForm()
         {
@@ -24,12 +24,19 @@ namespace UltimateConsole
         {
             //replace the font with a new one
             Font.Dispose();
-            Font = new Font("Lucida Console", 16);
+            Font = new Font("Lucida Console", 12);
+
+            //Cursor.Hide();
         }
 
         private void ConsoleForm_FormClosing(object sender, FormClosingEventArgs e)
         {
             Running = false;
+        }
+
+        private void ConsoleForm_Load(object sender, EventArgs e)
+        {
+            Running = true;
         }
     }
 }

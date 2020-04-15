@@ -11,11 +11,13 @@ namespace UltimateConsole
     {
         public char Char { get; set; }
         public Color Color { get; set; }
+        public bool Filled { get; set; }
 
         public ConsoleChar(char c, Color color)
         {
             Char = c;
             Color = color;
+            Filled = false;
         }
 
         public static implicit operator char(ConsoleChar c) => c.Char;

@@ -37,5 +37,10 @@ namespace UltimateConsole
         {
             return new ConsoleRect((int)(cr.Left * s.Width), (int)(cr.Top * s.Height), (int)(cr.Width * s.Width), (int)(cr.Height * s.Height), cr.Color);
         }
+
+        public static ConsoleRect operator +(ConsoleRect cr, Point p)
+        {
+            return new ConsoleRect(cr.Left + p.X, cr.Top + p.Y, cr.Width, cr.Height, cr.Color);
+        }
     }
 }
