@@ -121,7 +121,6 @@ namespace UltimateConsole
         private static Action onWaitKeyPressed;
 
         private static Point PointerPosition = OutOfView;
-        public static int mouseState = -1;
 
         public static ConsoleCursor TextCursor { get; private set; } = new ConsoleCursor(ConsoleCursor.Shape.Line);
         private static Timer cursorTimer;
@@ -413,22 +412,30 @@ namespace UltimateConsole
 
         private static void Form_MouseUp(object sender, MouseEventArgs e)
         {
-            if(mouseState == 0)//left click: end highlight time
+            switch (e.Button)
             {
-                //check for click
-                if (GetIndex(PointerPosition) == highlightStart || PointerPosition == OutOfView)//just clicked, don't highlight one spot
-                {
-                    highlightStart = OutOfRange;
-
-                } else//highlighting...
-                {
-                    highlightEnd = GetIndex(TextCursor.Position);
-
-                    Highlight(highlightStart, highlightEnd, true);
-                }
+                case System.Windows.Forms.MouseButtons.Left:
+                    if (!newKeyStates.ContainsKey("LButton"))
+                        newKeyStates["LButton"] = KeyStates.Up;
+                    break;
+                case System.Windows.Forms.MouseButtons.Middle:
+                    if (!newKeyStates.ContainsKey("MButton"))
+                        newKeyStates["MButton"] = KeyStates.Up;
+                    break;
+                case System.Windows.Forms.MouseButtons.Right:
+                    if (!newKeyStates.ContainsKey("RButton"))
+                        newKeyStates["RButton"] = KeyStates.Up;
+                    break;
             }
 
-            mouseState = -1;//no longer holding down
+            if (e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
+            {
+                if (IsHighlighting) Highlight(highlightStart, highlightEnd, false);
+
+                SetCursorPositionToPointerPosition();
+
+                highlightStart = GetIndex(TextCursor.Position);
+            }
 
             Update();
         }
@@ -437,14 +444,21 @@ namespace UltimateConsole
         {
             switch (e.Button)
             {
-                case MouseButtons.Left: mouseState = 0; break;
-                case MouseButtons.Right: mouseState = 1; break;
-                case MouseButtons.Middle: mouseState = 2; break;
-                default:
-                    mouseState = -1; break;
+                case System.Windows.Forms.MouseButtons.Left:
+                    if(!newKeyStates.ContainsKey("LButton"))
+                        newKeyStates["LButton"] = KeyStates.Down; 
+                    break;
+                case System.Windows.Forms.MouseButtons.Middle:
+                    if (!newKeyStates.ContainsKey("MButton"))
+                        newKeyStates["MButton"] = KeyStates.Down; 
+                    break;
+                case System.Windows.Forms.MouseButtons.Right:
+                    if (!newKeyStates.ContainsKey("RButton"))
+                        newKeyStates["RButton"] = KeyStates.Down; 
+                    break;
             }
 
-            if(mouseState == 0)//left click: highlight time
+            if(e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
             {
                 if(IsHighlighting) Highlight(highlightStart, highlightEnd, false);
 
@@ -484,7 +498,7 @@ namespace UltimateConsole
                 PointerPosition = ScreenPositionToBufferPosition(e.Location, FontWidth / 2);
 
                 //if highlighting
-                if(mouseState == 0 && PointerPosition != OutOfView && highlightStart != OutOfRange)
+                if(e.Button == System.Windows.Forms.MouseButtons.Left && PointerPosition != OutOfView && highlightStart != OutOfRange)
                 {
                     SetCursorPositionToPointerPosition();
 
@@ -1479,7 +1493,7 @@ namespace UltimateConsole
 
         #endregion
 
-        #region Key Input
+        #region Input
 
         public static void WaitForKey(string keyName, Action onInput)
         {
@@ -1561,13 +1575,26 @@ namespace UltimateConsole
             return keyStates.ContainsKey(keyName) && keyStates[keyName] == KeyStates.Up;
         }
 
-        public static bool IsMouseDown() {
-            return mouseState != -1;
+        public enum MouseButtons
+        {
+            LButton,
+            MButton,
+            RButton
         }
 
-        public static bool IsMouseDown(int state)
+        public static bool IsMouseDown(MouseButtons button)
         {
-            return mouseState == state;
+            return keyStates.ContainsKey(button.ToString()) && keyStates[button.ToString()] == KeyStates.Down;
+        }
+
+        public static bool IsMousePressed(MouseButtons button)
+        {
+            return keyStates.ContainsKey(button.ToString()) && keyStates[button.ToString()] == KeyStates.Pressed;
+        }
+
+        public static bool IsMouseUp(MouseButtons button)
+        {
+            return keyStates.ContainsKey(button.ToString()) && keyStates[button.ToString()] == KeyStates.Up;
         }
 
         //borrowed from Stack Overflow
