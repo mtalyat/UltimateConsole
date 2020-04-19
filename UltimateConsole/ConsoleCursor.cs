@@ -13,11 +13,33 @@ namespace UltimateConsole
         {
             SolidRectangle,
             Rectangle,
-            Underscore
+            Underscore,
+            Line
         }
 
         public bool Visible { get; set; } = true;
-        public Point Position { get; set; } = new Point(-1, -1);
+
+        private Point pos = new Point();
+        public Point Position
+        {
+            get => pos;
+            set
+            {
+                pos = value;
+                index = pos.Y * Console.BufferSize.Width + pos.X;
+            }
+        }
+        private int index;
+        public int Index
+        {
+            get => index;
+            set
+            {
+                index = value;
+                int x = index % Console.BufferSize.Width;
+                pos = new Point(x, (index - x) / Console.BufferSize.Width);
+            }
+        }
         public Color Color { get; set; } = Color.White;
         public Shape DisplayShape { get; set; }
 
@@ -42,6 +64,11 @@ namespace UltimateConsole
                     int uHeight = (int)(fontHeight * 0.2);
                     using (Brush b = new SolidBrush(Color))
                         g.FillRectangle(b, Position.X * fontWidth + xOffset, Position.Y * fontHeight + fontHeight - uHeight + yOffset, fontWidth, uHeight);
+                    break;
+                case Shape.Line:
+                    Point pos = new Point(Position.X * fontWidth + xOffset, Position.Y * fontHeight + yOffset);
+                    using (Pen p = new Pen(Color, 1))
+                        g.DrawLine(p, pos.X, pos.Y, pos.X, pos.Y + fontHeight);
                     break;
             }
         }

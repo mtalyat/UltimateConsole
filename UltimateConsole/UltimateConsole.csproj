@@ -41,6 +41,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Console.cs" />
+    <Compile Include="ConsoleButton.cs" />
     <Compile Include="ConsoleChar.cs" />
     <Compile Include="ConsoleCursor.cs" />
     <Compile Include="ConsoleForm.cs">

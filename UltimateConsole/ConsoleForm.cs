@@ -1,11 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
 using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace UltimateConsole
@@ -25,8 +19,6 @@ namespace UltimateConsole
             //replace the font with a new one
             Font.Dispose();
             Font = new Font("Lucida Console", 12);
-
-            //Cursor.Hide();
         }
 
         private void ConsoleForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -37,6 +29,8 @@ namespace UltimateConsole
         private void ConsoleForm_Load(object sender, EventArgs e)
         {
             Running = true;
+
+            Focus();
         }
     }
 }

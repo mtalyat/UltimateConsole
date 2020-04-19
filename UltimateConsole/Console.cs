@@ -8,30 +8,44 @@ namespace UltimateConsole
 {
     public static class Console
     {
-        public static string Name
-        {
-            get => form.Text;
-            set => form.Text = value;
-        }
+        public static string Title { get; set; } = "Ultimate Console";
+
+        //consts
+        private const char NEW_LINE = '\n';
+        private const char TAB = '\t';
 
         //settings
         public static bool ClearAfterPrint { get; set; } = false;
         public static bool HideKeyInput { get; set; } = false;
         public static bool StopOnError { get; set; } = true;
+        public static bool InstantWrite { get; set; } = true;
         public static int TabLength { get; set; } = 2;
 
-        private static bool isControl = true;
-        public static bool IsControl
+        public static bool ShowTitle { get; set; }
+        public static bool AllowMinimize
         {
-            get
-            {
-                return isControl;
-            }
-            set
-            {
-                isControl = value;
-            }
+            get => buttons[0].Enabled;
+            set => buttons[0].Enabled = value;
         }
+        public static bool AllowMaximize
+        {
+            get => buttons[1].Enabled;
+            set => buttons[1].Enabled = value;
+        }
+        public static bool AllowRestart
+        {
+            get => buttons[2].Enabled;
+            set => buttons[2].Enabled = value;
+        }
+
+        //control box stuff
+        public static bool IsControlBox { get; set; } = true;
+        private static ConsoleButton[] buttons;
+        private static int ButtonWidth
+        {
+            get => FontWidth * 3;
+        }
+        private const int BUTTON_AMOUNT = 4;
 
         private static Size bufferSize;
         public static Size BufferSize
@@ -45,8 +59,12 @@ namespace UltimateConsole
                 SetBufferSize(value);
             }
         }
+        private static int bufferLength
+        {
+            get => bufferSize.Width * bufferSize.Height;
+        }
 
-        private static ConsoleChar[][] chars;
+        private static List<ConsoleChar> chars;
         private static List<ConsoleRect> rects;
 
         public static bool Running
@@ -56,27 +74,35 @@ namespace UltimateConsole
 
         private static ConsoleForm form;
 
+        public static bool IsFullScreen { get; private set; }
+
         public static Color ForeColor { get; set; } = Color.White;
         public static Color BackColor { get; set; } = Color.Black;
 
-        private static int FontHeight
+        public static Font Font
         {
-            get => form.Font.Height;
+            get => form.Font;
+            set
+            {
+                form.Font.Dispose();
+                form.Font = value;
+                FixWindowSize();
+            }
         }
-        private static int FontWidth
+        public static int FontHeight
+        {
+            get => Font.Height;
+        }
+        public static int FontWidth
         {
             get => (int)(FontHeight * 0.75);
         }
         public static float FontSize
         {
-            get => form.Font.Size;
+            get => Font.Size;
             set
             {
-                Font f = new Font(form.Font.Name, value);
-                form.Font.Dispose();
-                form.Font = f;
-
-                FixWindowSize();
+                Font = new Font(Font.Name, value);
             }
         }
 
@@ -94,27 +120,44 @@ namespace UltimateConsole
         private static string waitForKey = "";
         private static Action onWaitKeyPressed;
 
-        public static ConsoleCursor MousePointer { get; private set; } = new ConsoleCursor(ConsoleCursor.Shape.Rectangle);
+        private static Point PointerPosition = OutOfView;
         public static int mouseState = -1;
 
-        public static ConsoleCursor TextCursor { get; private set; } = new ConsoleCursor(ConsoleCursor.Shape.Underscore);
+        public static ConsoleCursor TextCursor { get; private set; } = new ConsoleCursor(ConsoleCursor.Shape.Line);
         private static Timer cursorTimer;
 
         private static bool shift = false;
+        private static bool ctrl = false;
         private static bool caps = false;
+
+        private static readonly Point OutOfView = new Point(-100, -100);
+        private const int OutOfRange = -100;
+
+        //highlighting
+        private static int highlightStart = OutOfRange;
+        private static int highlightEnd = OutOfRange;
+        public static string HighlightedText { get; private set; } = "";
+        public static bool IsHighlighting { get => HighlightedText.Any(); }
+        public static Color HighlightColor { get; set; } = Color.RoyalBlue;
+        //keeping these seperate from rects so they can always be drawn on top without a hassle of sorting them all
+        private static List<Point> highlightZones = new List<Point>();
 
         //input
         private static string input = "";
         private static bool reading = false;
 
-        public static int BorderWidth { get; set; } = 10;
-        public static Color BorderColor { get; set; } = Color.Cyan;
+        public static int BorderWidth { get; set; } = 6;
+        public static Color BorderColor { get; set; } = Color.DimGray;
 
-        const int DEFAULT_MARGIN = 0;
-        public static int TopMargin { get; set; } = DEFAULT_MARGIN;
-        public static int BottomMargin { get; set; } = DEFAULT_MARGIN;
-        public static int LeftMargin { get; set; } = DEFAULT_MARGIN;
-        public static int RightMargin { get; set; } = DEFAULT_MARGIN;
+        private static int _topMargin = 0;
+        public static int TopMargin
+        {
+            get => _topMargin + (IsControlBox ? FontHeight + BorderWidth : 0);
+            set => _topMargin = value;
+        }
+        public static int BottomMargin { get; set; } = 0;
+        public static int LeftMargin { get; set; } = 0;
+        public static int RightMargin { get; set; } = 0;
 
         private static int XMargin
         {
@@ -124,11 +167,6 @@ namespace UltimateConsole
         {
             get => TopMargin + BottomMargin;
         }
-
-        //TODO: highlighting
-        //TODO: copy, cut, paste
-        //TODO: top info: (text, exit button, minimize, maximize, etc) (isControl)
-        //TODO: transparent draw
 
         static Console()
         {
@@ -147,16 +185,32 @@ namespace UltimateConsole
 
             rects = new List<ConsoleRect>();
             SetBufferSize(size);
+            FixWindowSize();
 
             cursorTimer = new Timer();
             cursorTimer.Interval = 1000;
             cursorTimer.Tick += CursorTimer_Tick;
             cursorTimer.Start();
 
-            MousePointer.Position = new Point(-1, -1);
             TextCursor.Position = new Point(0, 0);
 
-            form.KeyPreview = true;
+            //control buttons
+            buttons = new ConsoleButton[BUTTON_AMOUNT];
+            for (int i = 0; i < BUTTON_AMOUNT; i++)
+            {
+                buttons[i] = new ConsoleButton(new Rectangle(
+                    form.Size.Width - (BorderWidth + RightMargin) - BUTTON_AMOUNT * ButtonWidth + i * ButtonWidth, 
+                    BorderWidth, ButtonWidth, FontHeight), BorderColor, form);
+                buttons[i].TextColor = ForeColor;
+            }
+            buttons[0].Text = "-";//minimize
+            buttons[0].OnClick = ToggleMinimize;
+            buttons[1].Text = "[]";//maximize
+            buttons[1].OnClick = ToggleMaximize;
+            buttons[2].Text = "R";//restart
+            buttons[2].OnClick = Restart;
+            buttons[3].Text = "X";//close
+            buttons[3].OnClick = Close;
 
             //events
             form.Paint += Form_Paint;
@@ -180,11 +234,72 @@ namespace UltimateConsole
             form.Show();
         }
 
+        private static bool IsValid(int index)
+        {
+            return index >= 0 && index < chars.Count;
+        }
+
         private static bool IsValid(Point p) => IsValid(p.X, p.Y);
         private static bool IsValid(int x, int y)
         {
             return x >= 0 && y >= 0 && x < bufferSize.Width && y < bufferSize.Height;
         }
+
+        private static Point ScreenPositionToBufferPosition(Point screenPos, int xOffset = 0, int yOffset = 0)
+        {
+            return new Point((screenPos.X - BorderWidth - LeftMargin + xOffset) / FontWidth, (screenPos.Y - BorderWidth - TopMargin + yOffset) / FontHeight);
+        }
+
+        #region Data Management
+
+        private static ConsoleChar GetChar(int x, int y)
+        {
+            int i = GetIndex(x, y);
+
+            if (!IsValid(i)) return new ConsoleChar();
+
+            return chars[i];
+        }
+
+        private static void SetChar(int x, int y, char c) => SetChar(x, y, new ConsoleChar(c, ForeColor));
+        private static void SetChar(int x, int y, ConsoleChar c)
+        {
+            int i = GetIndex(x, y);
+
+            if (!IsValid(i)) return;
+
+            chars[i] = c;
+        }
+
+        private static int GetIndex(Point p) => GetIndex(p.X, p.Y);
+        private static int GetIndex(int x, int y)
+        {
+            return y * bufferSize.Width + x;
+        }
+
+        private static Point GetPoint(int index)
+        {
+            if (index < 0) return OutOfView;
+
+            int x = index % bufferSize.Width;
+            return new Point(x, (index - x) / bufferSize.Width);
+        }
+
+        private static void ReplaceAt(int index, ConsoleChar[] cs)
+        {
+            chars.RemoveRange(index, cs.Length);
+            chars.InsertRange(index, cs);
+        }
+
+        private static void FillChars()
+        {
+            if(chars.Count < bufferSize.Width * bufferSize.Height)
+            {
+                chars.AddRange(new ConsoleChar[bufferSize.Width * bufferSize.Height - chars.Count]);
+            }
+        }
+
+        #endregion
 
         #region Events
 
@@ -202,7 +317,12 @@ namespace UltimateConsole
             if (!shift && (Control.ModifierKeys & Keys.Shift) != 0)
             {
                 shift = true;
-            } else if (e.KeyCode == Keys.CapsLock)
+            }
+            else if (!ctrl && (Control.ModifierKeys & Keys.Control) != 0)
+            {
+                ctrl = true;
+            }
+            else if (e.KeyCode == Keys.CapsLock)
             {
                 caps = !caps;
             }
@@ -224,6 +344,35 @@ namespace UltimateConsole
                     return;
             }
 
+            //shortcuts
+            if (ctrl)
+            {
+                switch (e.KeyCode)
+                {
+                    case Keys.A://highlight all
+                        SelectAll();
+                        break;
+                    case Keys.C://copy
+                        Copy();
+                        break;
+                    case Keys.V://paste
+                        Paste();
+                        break;
+                    case Keys.X://cut
+                        Cut();
+                        break;
+                    case Keys.Y://redo
+                        Redo();
+                        break;
+                    case Keys.Z://undo
+                        Undo();
+                        break;
+                    default: return;//just return if no shortcut clicked
+                }
+
+                return;
+            }
+
             //if show text
             if (!HideKeyInput)
             {
@@ -235,16 +384,10 @@ namespace UltimateConsole
                     case Keys.Delete:
                         Delete();
                         break;
-                    case Keys.Tab:
-                        input += new string(' ', Tab());
-                        break;
-                    case Keys.Enter:
-                        NewLine();
-                        input += '\n';
-                        break;
                     default:
-                        Write(KeyToChar(e.KeyCode));
-                        input += KeyToChar(e.KeyCode);
+                        char c = KeyToChar(e.KeyCode);
+                        Write(c, true);
+                        input += c;
                         break;
                 }
             }
@@ -257,6 +400,9 @@ namespace UltimateConsole
             if (shift && (Control.ModifierKeys & Keys.Shift) == 0)
             {
                 shift = false;
+            } else if (ctrl && (Control.ModifierKeys & Keys.Control) == 0)
+            {
+                ctrl = false;
             }
         }
 
@@ -267,23 +413,28 @@ namespace UltimateConsole
 
         private static void Form_MouseUp(object sender, MouseEventArgs e)
         {
-            if (MousePointer.DisplayShape == ConsoleCursor.Shape.SolidRectangle)
+            if(mouseState == 0)//left click: end highlight time
             {
-                MousePointer.DisplayShape = ConsoleCursor.Shape.Rectangle;
+                //check for click
+                if (GetIndex(PointerPosition) == highlightStart || PointerPosition == OutOfView)//just clicked, don't highlight one spot
+                {
+                    highlightStart = OutOfRange;
+
+                } else//highlighting...
+                {
+                    highlightEnd = GetIndex(TextCursor.Position);
+
+                    Highlight(highlightStart, highlightEnd, true);
+                }
             }
 
-            mouseState = -1;
+            mouseState = -1;//no longer holding down
 
             Update();
         }
 
         private static void Form_MouseDown(object sender, MouseEventArgs e)
         {
-            if (MousePointer.DisplayShape == ConsoleCursor.Shape.Rectangle)
-            {
-                MousePointer.DisplayShape = ConsoleCursor.Shape.SolidRectangle;
-            }
-
             switch (e.Button)
             {
                 case MouseButtons.Left: mouseState = 0; break;
@@ -293,10 +444,14 @@ namespace UltimateConsole
                     mouseState = -1; break;
             }
 
-            TextCursor.Position = new Point(e.X / FontWidth, e.Y / FontHeight);
-            TextCursor.Visible = true;
-            cursorTimer.Stop();
-            cursorTimer.Start();
+            if(mouseState == 0)//left click: highlight time
+            {
+                if(IsHighlighting) Highlight(highlightStart, highlightEnd, false);
+
+                SetCursorPositionToPointerPosition();
+
+                highlightStart = GetIndex(TextCursor.Position);
+            }
 
             Update();
         }
@@ -326,10 +481,24 @@ namespace UltimateConsole
             } else
             {
                 //in view, not on border
-                MousePointer.Position = new Point((e.X - BorderWidth - LeftMargin) / FontWidth, (e.Y - BorderWidth - TopMargin) / FontHeight);
-            }
+                PointerPosition = ScreenPositionToBufferPosition(e.Location, FontWidth / 2);
 
-            Update();
+                //if highlighting
+                if(mouseState == 0 && PointerPosition != OutOfView && highlightStart != OutOfRange)
+                {
+                    SetCursorPositionToPointerPosition();
+
+                    if (GetIndex(PointerPosition) != highlightStart)
+                    {
+                        Highlight(highlightStart, GetIndex(TextCursor.Position));
+                    } else
+                    {
+                        Highlight(highlightStart, GetIndex(TextCursor.Position), false);
+                    }
+
+                    Update();
+                }
+            }
         }
 
         #endregion
@@ -338,7 +507,7 @@ namespace UltimateConsole
 
         private static void MovePointerOutOfView()
         {
-            MousePointer.Position = new Point(-100, -100);
+            PointerPosition = OutOfView;
         }
 
         public static void ShowCursor()
@@ -353,19 +522,85 @@ namespace UltimateConsole
             TextCursor.Visible = false;
         }
 
-        public static void ShowPointer()
+        private static void SetCursorPositionToPointerPosition()
         {
-            MousePointer.Visible = true;
+            //move text cursor when left clicked
+            TextCursor.Position = new Point(FindFirstFilledFromRight(PointerPosition.Y, PointerPosition.X), PointerPosition.Y);
+            RefreshTextCursorTimer();
+            TextCursor.Visible = true;
         }
 
-        public static void HidePointer()
+        private static void Highlight(int hStart, int hEnd, bool highlight = true)
         {
-            MousePointer.Visible = false;
+            HighlightedText = "";
+            highlightZones.Clear();
+
+            if (!highlight) return;
+
+            int start = hStart;
+            int end = hEnd;
+
+            //swap the start and end if they need to be switched so the algorithm here works
+            if (start > end)
+            {
+                start = hEnd;
+                end = hStart;
+            }
+
+            if (start < 0 || end < 0) return;
+
+            bool wasFilled = false;
+            bool h = false;
+            int firstFilledIndex = 0;
+
+            //go through each row/spot and check if it is filled, then highlight it if it is
+            for (int i = start; i < end; i++)
+            {
+                ConsoleChar c = chars[i];
+
+                if (c.IsFilled)
+                {
+                    if (!wasFilled)//this one is filled, last one was not
+                    {
+                        firstFilledIndex = i;
+                    }
+
+                    wasFilled = true;
+
+                    HighlightedText += c.Char;
+                } else
+                {
+                    if (wasFilled)//this one isn't filled, last one was
+                    {
+                        h = true;
+                    }
+
+                    wasFilled = false;
+                }
+
+                if(h || i == end - 1)
+                {
+                    highlightZones.Add(new Point(firstFilledIndex, i + 1));
+
+                    h = false;
+                }
+            }
         }
 
         #endregion
 
         #region Display
+
+        public static void Close()
+        {
+            Environment.Exit(0);
+        }
+
+        public static void Restart()
+        {
+            Application.Restart();
+            Environment.Exit(0);
+        }
 
         /// <summary>
         /// Clears the data, not the screen.
@@ -373,13 +608,16 @@ namespace UltimateConsole
         public static void Clear()
         {
             //clear the text
-            for (int i = 0; i < bufferSize.Height; i++)
-            {
-                chars[i] = ConsoleChar.FromString(new string(' ', BufferSize.Width), ForeColor);
-            }
+            chars = new List<ConsoleChar>(new ConsoleChar[bufferSize.Width * bufferSize.Height]);
 
             //clear the rects
             rects.Clear();
+            highlightZones.Clear();
+        }
+
+        private static ConsoleChar[] NewConsoleCharLine
+        {
+            get => new ConsoleChar[bufferSize.Width];
         }
 
         public static void ClearScreen()
@@ -395,16 +633,25 @@ namespace UltimateConsole
 
             bufferSize = size;
 
-
             //TODO: adjust data, don't delete it
             //set the data to the correct size
-            chars = new ConsoleChar[size.Height][];
+            chars = new List<ConsoleChar>(size.Width * size.Height);
+
             Clear();
         }
 
-        public static void SetWindowSize(Size size)
+        //resizes the buffer if the window size was changed outside of this code
+        private static void FixBufferSize()
         {
-            form.Size = new Size(size.Width / FontWidth * FontWidth + BorderWidth * 2 + XMargin, size.Height / FontHeight * FontHeight + BorderWidth * 2 + YMargin);
+            int bWidth = (form.Width - BorderWidth * 2 - XMargin) / FontWidth;
+            int bHeight = (form.Height - BorderWidth * 2 - YMargin) / FontHeight;
+
+            ResizeBuffer(bWidth, bHeight);
+        }
+
+        public static void SetWindowSize(Size buffSize)
+        {
+            form.Size = new Size(buffSize.Width * FontWidth + BorderWidth * 2 + XMargin, buffSize.Height * FontHeight + BorderWidth * 2 + YMargin);
         }
 
         private static void FixWindowSize()
@@ -418,11 +665,109 @@ namespace UltimateConsole
             BackColor = back;
         }
 
+        public static void ResizeBuffer(int width, int height) => ResizeBuffer(new Size(width, height));
+        public static void ResizeBuffer(Size size)
+        {
+            //this function was a BITCH to make.. but it works
+
+            if (size == bufferSize) return;//not changing size
+
+            Size oldSize = bufferSize;
+            bufferSize = size;
+
+            int count = chars.Count;
+
+            Log("\tStart");
+
+            //find the end of lines (\n) and then fill with spaces until the end of the actual line
+            for(int i = 1; i < count; i++)
+            {
+                i = FindFirstNewLine(i - 1);
+                Point p = GetPoint(i);
+                int nextLineIndex = FindFirstFilledFromLeft(p.Y, p.X + 1);
+
+                Point nextLinePoint = GetPoint(nextLineIndex);
+
+                //check if at the end
+                if(nextLineIndex == -1)
+                {
+                    if (count < bufferLength)
+                    {
+                        //add to the end
+                        chars.AddRange(new ConsoleChar[bufferLength - count]);
+                    } else if (count > bufferLength)
+                    {
+                        //sorry, just longer than expected
+                        chars.RemoveRange(bufferLength, count - bufferLength);
+                    }
+
+                    break;
+                }
+
+                int countAdjustment = 0;
+
+                //find if you need to remove or add spaces to the end
+                if(nextLinePoint.Y != p.Y)//need to remove
+                {
+                    countAdjustment = nextLineIndex - i - (bufferSize.Width - (i % bufferSize.Width));
+
+                    chars.RemoveRange(nextLineIndex - countAdjustment, countAdjustment);
+
+                    countAdjustment *= -1;
+                } else if (nextLinePoint.Y == p.Y && nextLinePoint.X < bufferSize.Width - 1)//need to add
+                {
+                    countAdjustment = bufferSize.Width - (nextLineIndex % bufferSize.Width);
+
+                    chars.InsertRange(i + 1, new ConsoleChar[countAdjustment]);
+                }
+
+                i = nextLineIndex + countAdjustment;
+                count += countAdjustment;
+            }
+        }
+
+        public static void ToggleMinimize()
+        {
+            if(form.WindowState == FormWindowState.Minimized)
+            {
+                form.WindowState = FormWindowState.Normal;
+            } else
+            {
+                form.WindowState = FormWindowState.Minimized;
+            }
+        }
+
+        //toggles fullscreen
+        public static void ToggleMaximize()
+        {
+            if (form.WindowState == FormWindowState.Maximized)
+            {
+                form.WindowState = FormWindowState.Normal;
+            }
+            else
+            {
+                form.WindowState = FormWindowState.Maximized;
+            }
+
+            FixBufferSize();
+            UpdateButtonPositions();
+        }
+
+        private static void UpdateButtonPositions()
+        {
+            for (int i = 0; i < BUTTON_AMOUNT; i++)
+            {
+                buttons[i].Bounds = new Rectangle(
+                    form.Size.Width - (BorderWidth + RightMargin) - BUTTON_AMOUNT * ButtonWidth + i * ButtonWidth,
+                    BorderWidth, ButtonWidth, FontHeight);
+            }
+        }
+
         #endregion
 
-        #region Writing and Reading
+        #region Writing, Reading and Waiting
 
-        public static void Write(object o)
+        public static void Write(object o, bool updateAfterWrite = false)
         {
             string str = o.ToString();
 
@@ -430,28 +775,41 @@ namespace UltimateConsole
             {
                 char c = str[i];
 
-                if (c == '\t')
+                if (c == TAB)
                 {
                     Tab();
-                } else if (c == '\n')
-                {
-                    NewLine();
-                } else if (c >= 32)//32 is space, or something like that
+                } else if (c >= 32 || c == NEW_LINE)//32 is space, 10 is NEW_LINE
                 {
                     TypeAndMove(new ConsoleChar(c, ForeColor));
                 }
             }
 
-            Update();
+            if (updateAfterWrite) Update();
+            //don't update when you write, only when you read
+            //then if you have many Write() statements it will be instant
+            //if there is no read after the write the Console will just close anyways
         }
 
-        public static void WriteLine(object o)
+        public static void WriteLine() => WriteLine("");
+        public static void WriteLine(object o, bool updateAfterWrite = false)
         {
-            Write(o.ToString() + '\n');
+            Write(o.ToString() + '\n', updateAfterWrite);
+        }
+
+        //write overlaps, insert does not
+        public static void Insert(object o, int left, int top)
+        {
+            string s = o.ToString();
+            int i = GetIndex(left, top);
+
+            ShiftLine(top, left, s.Length);
+            ReplaceAt(i, ConsoleChar.FromString(s, ForeColor));
         }
 
         public static string ReadLine()
         {
+            Update();
+
             input = "";
             reading = true;
 
@@ -463,8 +821,61 @@ namespace UltimateConsole
             return input.Remove(input.Length - 1);
         }
 
+        public static string GetRange(Point start, Point stop)
+        {
+            if (!IsValid(start) || !IsValid(stop)) return "";
+
+            Point topLeft = new Point(Math.Min(start.X, stop.X), Math.Min(start.Y, stop.Y));
+            Point bottomRight = new Point(Math.Max(start.X, stop.X), Math.Max(start.Y, stop.Y));
+
+            string output = "";
+
+            for(int y = topLeft.Y; y < bottomRight.Y; y++)
+            {
+                for(int x = topLeft.X; x < bottomRight.X; x++)
+                {
+                    output += GetChar(x, y).Char;
+                }
+            }
+
+            return output;
+        }
+
+        public static string GetLine(Point start, int length)
+        {
+            return GetRange(start, new Point(start.X + length, start.Y));
+        }
+
+        public static int ReadInt()
+        {
+            string str;
+            int num;
+
+            do
+            {
+                str = ReadLine();
+            } while (!int.TryParse(str, out num));
+
+            return num;
+        }
+
+        public static double ReadDouble()
+        {
+            string str;
+            double num;
+
+            do
+            {
+                str = ReadLine();
+            } while (!double.TryParse(str, out num));
+
+            return num;
+        }
+
         public static char Read()
         {
+            Update();
+
             input = "";
             reading = true;
 
@@ -476,40 +887,167 @@ namespace UltimateConsole
             return input[0];
         }
 
+        //waits until user presses enter to continue
+        public static void Wait()
+        {
+            GoToEmptyLine();
+            WriteLine("Press Enter to continue.");
+            ReadLine();
+        }
+
+        #endregion
+
+        #region Shortcuts
+
+        private static void SelectAll()
+        {
+            Highlight(0, chars.Count);
+
+            Update();
+        }
+
+        private static void Cut()
+        {
+            if (IsHighlighting)
+            {
+                SetClipboardText(HighlightedText);
+                DeleteHighlightedZone();
+                Highlight(highlightStart, highlightEnd, false);
+            }
+            else
+            {
+                SetClipboardText(GetTextFromRow(TextCursor.Position.Y));
+                DeleteLine(TextCursor.Position.Y);
+            }
+
+            Update();
+        }
+
+        private static void Copy()
+        {
+            if (IsHighlighting)
+            {
+                SetClipboardText(HighlightedText);
+                Highlight(highlightStart, highlightEnd, false);
+            }
+            else
+            {
+                SetClipboardText(GetTextFromRow(TextCursor.Position.Y));
+            }
+
+            Update();
+        }
+
+        private static void SetClipboardText(string text)
+        {
+            System.Threading.Thread STAThread = new System.Threading.Thread(delegate ()
+           {
+               Clipboard.SetText(text.Replace(NEW_LINE.ToString(), Environment.NewLine));
+           });
+            STAThread.SetApartmentState(System.Threading.ApartmentState.STA);
+            STAThread.Start();
+            STAThread.Join();
+        }
+
+        private static string GetClipboardText()
+        {
+            string output = "";
+
+            System.Threading.Thread STAThread = new System.Threading.Thread(delegate ()
+            {
+                output = Clipboard.GetText();
+            });
+            STAThread.SetApartmentState(System.Threading.ApartmentState.STA);
+            STAThread.Start();
+            STAThread.Join();
+
+            return output.Replace(Environment.NewLine, NEW_LINE.ToString());
+        }
+
+        private static void Paste()
+        {
+            string text = GetClipboardText();
+
+            Insert(text, TextCursor.Position.X, TextCursor.Position.Y);
+
+            TextCursor.Index += text.Length;
+
+            if(IsHighlighting) Highlight(highlightStart, highlightEnd, false);
+
+            Update();
+        }
+
+        private static void Undo()
+        {
+            throw new NotImplementedException();
+        }
+
+        private static void Redo()
+        {
+            throw new NotImplementedException();
+        }
+
         #endregion
 
         #region Typing
 
-        private static void NewLine()
+        public static void GoToEmptyLine()
         {
-            Shift(TextCursor.Position.Y, -1);
+            TextCursor.Position = new Point(0, FindFirstEmptyLine(TextCursor.Position.Y));
+        }
+
+        //moves to the next line
+        private static void NextLine()
+        {
+            ShiftLines(TextCursor.Position.Y, -1);
 
             TextCursor.Position = new Point(0, TextCursor.Position.Y + 1);
 
             RefreshTextCursorTimer();
         }
 
-        private static void Shift(int top, int amount)
+        private static void ShiftLines(int top, int amount)
         {
             if (amount == 0) return;
 
             if(amount < 0)//shifting down
             {
-                //bottom row gets 'deleted'
-                for (int i = bufferSize.Height - 1; i > top + 1 && i + amount >= 0; i--)
+                for (int i = 0; i < amount; i++)
                 {
-                    Array.Copy(chars[i + amount], 0, chars[i], 0, bufferSize.Width);
+                    //bottom row gets 'deleted'
+                    chars.RemoveRange(chars.Count - bufferSize.Width, bufferSize.Width);
+                    chars.InsertRange(GetIndex(0, top), NewConsoleCharLine);
                 }
             } else//shifting up
             {
-                for(int i = 0; i < top - 1 && i + amount < bufferSize.Height; i++)
+                for (int i = 0; i < amount; i++)
                 {
-                    Array.Copy(chars[i + amount], 0, chars[i], 0, bufferSize.Width);
+                    //top row gets 'deleted'
+                    chars.RemoveRange(0, bufferSize.Width);
+                    chars.InsertRange(GetIndex(0, top), NewConsoleCharLine);
                 }
+
+                //hasn't been tested
+                throw new NotImplementedException();
             }
 
             //TODO: split rectangles if there are in the middle
             //and shift rectangles
+        }
+
+        private static void ShiftLine(int top, int left, int amount)
+        {
+            //delete from left until amount
+            //then after the next \n, add blank ones
+
+            int i = GetIndex(left, top);
+            chars.InsertRange(i, new ConsoleChar[amount]);
+
+            //find next line
+            int n = FindFirstNewLine(i);
+
+            //remove contents from the end of that line
+            chars.RemoveRange(n, Math.Min(bufferSize.Width - 1 - (n % bufferSize.Width), amount));//don't delete part of next line
         }
 
         private static int Tab()
@@ -531,12 +1069,11 @@ namespace UltimateConsole
             int y = TextCursor.Position.Y;
 
             Draw(c.Char, c.Color, x, y);
-            chars[y][x].Filled = true;
 
-            if (x >= bufferSize.Width - 1)
+            if (x >= bufferSize.Width - 1 || c.Char == NEW_LINE)
             {
                 //at the end, gonna have to make a new line
-                NewLine();
+                NextLine();
             } else
             {
                 TextCursor.Position = new Point(x + 1, y);
@@ -547,6 +1084,12 @@ namespace UltimateConsole
 
         private static void BackSpace()
         {
+            if (IsHighlighting)
+            {
+                DeleteHighlightedZone();
+                return;
+            }
+
             int x = TextCursor.Position.X;
             int y = TextCursor.Position.Y;
 
@@ -572,7 +1115,29 @@ namespace UltimateConsole
 
         private static void Delete()
         {
+            //TODO: delete any char that is highlighted, or the one char at the pointer
+            if (IsHighlighting)
+            {
+                DeleteHighlightedZone();
+                return;
+            }
+
             throw new NotImplementedException();
+        }
+
+        private static void DeleteHighlightedZone()
+        {
+            int start = highlightStart;
+            int end = highlightEnd;
+
+            if(highlightStart > highlightEnd)
+            {
+                start = highlightEnd;
+                end = highlightStart;
+            }
+
+            chars.RemoveRange(start, end - start);
+            FillChars();
         }
 
         private static int FindFirstFilledFromRight(int top, int left = -1)
@@ -581,7 +1146,7 @@ namespace UltimateConsole
 
             for (int i = bufferSize.Width - 1; i >= 0; i--)
             {
-                if (chars[top][i].Filled)
+                if (GetChar(i, top).IsFilled)
                 {
                     //wouldn't make sense for it to jump to the right
                     if (i > left && left >= 0)
@@ -597,11 +1162,45 @@ namespace UltimateConsole
             return 0;
         }
 
+        private static int FindFirstFilledFromLeft(int top, int left = -1)
+        {
+            for (int i = GetIndex(left, top); i < chars.Count; i++)
+            {
+                if (chars[i].IsFilled) return i;
+            }
+
+            return -1;//no new lines
+        }
+
+        private static int FindFirstEmptyLine(int startLine = 0)
+        {
+            if (!IsValid(0, startLine)) return -1;
+
+            for (int y = startLine; y < bufferSize.Height; y++)
+            {
+                if (!GetChar(0, y).IsFilled) return y;
+            }
+
+            return -1;//no empty lines
+        }
+
+        private static int FindFirstNewLine(int startIndex)
+        {
+            if (!IsValid(startIndex)) return -1;
+
+            for (int i = startIndex; i < chars.Count; i++)
+            {
+                if (chars[i].Char == NEW_LINE) return i;
+            }
+
+            return -1;//no new lines
+        }
+
         private static void ClearAt(Point p) => ClearAt(p.X, p.Y);
 
         private static void ClearAt(int left, int top)
         {
-            chars[top][left] = new ConsoleChar();
+            SetChar(left, top, new ConsoleChar());
         }
 
         private static void Move(int x, int y)
@@ -625,6 +1224,25 @@ namespace UltimateConsole
             TextCursor.Visible = true;
         }
 
+        private static string GetTextFromRow(int top)
+        {
+            string output = "";
+
+            for (int i = bufferSize.Width * top; i < bufferSize.Width * bufferSize.Height - 1 && chars[i] != NEW_LINE; i++)
+            {
+                if (chars[i].IsFilled) output += chars[i].Char;
+            }
+
+            return output;
+        }
+
+        private static void DeleteLine(int top)
+        {
+            int i = top * bufferSize.Width;
+            chars.RemoveRange(i, Math.Max(FindFirstNewLine(i), bufferSize.Width) - i);
+            FillChars();
+        }
+
         #endregion
 
         #region Drawing
@@ -636,9 +1254,10 @@ namespace UltimateConsole
             rects.Add(new ConsoleRect(left, top, 1, 1, bgColor));
         }
 
+        //ACTUAL DRAWING FUNCTION
         public static void Draw(char c, Color color, int left, int top)
         {
-            chars[top][left] = new ConsoleChar(c, color);
+            SetChar(left, top, new ConsoleChar(c, color));
         }
 
         public static void Draw(char c, int left, int top)
@@ -646,13 +1265,14 @@ namespace UltimateConsole
             Draw(c, ForeColor, left, top);
         }
 
-        public static void Draw(string str, int left, int top)
+        public static void Draw(string str, int left, int top, bool transparent = false)
         {
             Draw(str, ForeColor, left, top);
         }
 
         //draws a string to the screen, in its color
-        public static void Draw(string str, Color fgColor, int left, int top)
+        //ACTUAL DRAWING FUNCTION
+        public static void Draw(string str, Color fgColor, int left, int top, bool transparent = false)
         {
             int stringLength = str.Length;
 
@@ -664,58 +1284,75 @@ namespace UltimateConsole
 
             ConsoleChar[] arr = ConsoleChar.FromString(str, fgColor);
 
-            int fromIndex = Math.Max(0, left * -1);
-            int toIndex = Math.Max(0, left);
-            int length = Math.Min(arr.Length - fromIndex, BufferSize.Width - 1 - toIndex);
+            if (transparent)
+            {
+                Draw_Transparent(arr, fgColor, left, top);
+                return;
+            }
 
-            Array.Copy(arr, fromIndex, chars[top], toIndex, length);
+            ReplaceAt(GetIndex(left, top), arr);
         }
 
-        public static void Draw(string str, Color fgColor, Color bgColor, int left, int top)
+        //slower, but allows for text "transparency"
+        //ACTUAL DRAWING FUNCTION
+        private static void Draw_Transparent(ConsoleChar[] arr, Color fgColor, int left, int top)
         {
-            Draw(str, fgColor, left, top);
+            int index = GetIndex(left, top);
+
+            for(int i = 0; i < arr.Length; i++)
+            {
+                if (arr[i].IsVisible)
+                {
+                    chars[i + index] = arr[i];
+                }
+            }
+        }
+
+        public static void Draw(string str, Color fgColor, Color bgColor, int left, int top, bool transparent = false)
+        {
+            Draw(str, fgColor, left, top, transparent);
 
             rects.Add(new ConsoleRect(left, top, str.Length, 1, bgColor));
         }
 
         //uses default colors
-        public static void Draw(string[] strs, int left, int top)
+        public static void Draw(string[] strs, int left, int top, bool transparent = false)
         {
-            Draw(strs, ForeColor, left, top);
+            Draw(strs, ForeColor, left, top, transparent);
         }
 
         //uses default bg color
-        public static void Draw(string[] strs, Color fgColor, int left, int top)
+        public static void Draw(string[] strs, Color fgColor, int left, int top, bool transparent = false)
         {
             for (int i = 0; i < strs.Length; i++)
             {
-                Draw(strs[i], fgColor, left, top + i);
+                Draw(strs[i], fgColor, left, top + i, transparent);
             }
         }
 
-        public static void Draw(string[] strs, int width, Color fgColor, Color bgColor, int left, int top)
+        public static void Draw(string[] strs, int width, Color fgColor, Color bgColor, int left, int top, bool transparent = false)
         {
-            Draw(strs, fgColor, left, top);
+            Draw(strs, fgColor, left, top, transparent);
 
             rects.Add(new ConsoleRect(left, top, width, strs.Length, bgColor));
         }
 
-        public static void Draw(char[][] chars, int left, int top)
+        public static void Draw(char[][] chars, int left, int top, bool transparent = false)
         {
-            Draw(chars, ForeColor, left, top);
+            Draw(chars, ForeColor, left, top, transparent);
         }
 
-        public static void Draw(char[][] chars, Color fgColor, int left, int top)
+        public static void Draw(char[][] chars, Color fgColor, int left, int top, bool transparent = false)
         {
             for (int i = 0; i < chars.Length; i++)
             {
-                Draw(new string(chars[i]), fgColor, left, top + i);
+                Draw(new string(chars[i]), fgColor, left, top + i, transparent);
             }
         }
 
-        public static void Draw(char[][] chars, int width, Color fgColor, Color bgColor, int left, int top)
+        public static void Draw(char[][] chars, int width, Color fgColor, Color bgColor, int left, int top, bool transparent = false)
         {
-            Draw(chars, fgColor, left, top);
+            Draw(chars, fgColor, left, top, transparent);
 
             rects.Add(new ConsoleRect(left, top, width, chars.Length, bgColor));
         }
@@ -744,15 +1381,37 @@ namespace UltimateConsole
 
         private static void Print(Graphics g)
         {
-            g.Clear(BackColor);
-
             int height = FontHeight;
             int width = FontWidth;
 
             //draw the border
             using (Pen p = new Pen(BorderColor, BorderWidth))
             {
-                g.DrawRectangle(p, BorderWidth / 2, BorderWidth / 2, form.Size.Width - BorderWidth - LeftMargin, form.Size.Height - BorderWidth - TopMargin);
+                g.DrawRectangle(p, BorderWidth / 2, BorderWidth / 2, form.Size.Width - BorderWidth, form.Size.Height - BorderWidth);
+
+                if (IsControlBox)
+                {
+                    //extra border when control box, to outline the top
+                    int y = TopMargin + BorderWidth / 2;
+                    g.DrawLine(p, 0, y, form.Size.Width, y);
+                }
+            }
+
+            //draw the control stuff
+            if (IsControlBox)
+            {
+                if (ShowTitle)
+                {
+                    using (Brush brush = new SolidBrush(ForeColor))
+                    {
+                        g.DrawString(Title, form.Font, brush, new Point(BorderWidth + LeftMargin, BorderWidth));
+                    }
+                }
+
+                for(int i = 0; i < buttons.Length; i++)
+                {
+                    buttons[i].Draw(g);
+                }
             }
 
             //draw the rectangles
@@ -764,23 +1423,49 @@ namespace UltimateConsole
                 }
             }
 
-            //draw the text over the rectangles
-            for (int i = 0; i < bufferSize.Height; i++)
+            //draw the highlighted rectangles
+            if (IsHighlighting)
             {
-                for (int j = 0; j < bufferSize.Width; j++)
+                using (Brush brush = new SolidBrush(HighlightColor))
                 {
-                    using (Brush brush = new SolidBrush(chars[i][j].Color))
+                    foreach (Point p in highlightZones)
                     {
-                        g.DrawString(chars[i][j].ToString(), form.Font, brush, j * width + BorderWidth + LeftMargin, i * height + BorderWidth + TopMargin);
+                        Point p1 = GetPoint(p.X);
+                        Point p2 = GetPoint(p.Y);
+
+                        g.FillRectangle(brush,
+                            p1.X * width + BorderWidth + LeftMargin,
+                            p1.Y * height + BorderWidth + TopMargin,
+                            (p2.X - p1.X) * width, height);
                     }
                 }
             }
 
-            //draw the cursor and pointer
-            if (MousePointer.Visible)
+            //draw the text over the rectangles
+            for (int y = 0; y < bufferSize.Height; y++)
             {
-                MousePointer.DrawShape(g, FontWidth, BorderWidth + LeftMargin, FontHeight, BorderWidth + TopMargin);
+                for (int x = 0; x < bufferSize.Width; x++)
+                {
+                    ConsoleChar c = GetChar(x, y);
+
+                    if(c.Char == NEW_LINE)
+                    {
+                        using (Brush brush = new SolidBrush(Color.Red))
+                        {
+                            g.DrawString("N", Font, brush, x * width + BorderWidth + LeftMargin, y * height + BorderWidth + TopMargin);
+                        }
+                    }
+
+                    if (!c.IsVisible) continue;//don't even bother if you can't see it
+
+                    using (Brush brush = new SolidBrush(c.Color))
+                    {
+                        g.DrawString(c.ToString(), Font, brush, x * width + BorderWidth + LeftMargin, y * height + BorderWidth + TopMargin);
+                    }
+                }
             }
+
+            //draw the cursor
             if (TextCursor.Visible)
             {
                 TextCursor.DrawShape(g, FontWidth, BorderWidth + LeftMargin, FontHeight, BorderWidth + TopMargin);
@@ -794,7 +1479,7 @@ namespace UltimateConsole
 
         #endregion
 
-        #region Input
+        #region Key Input
 
         public static void WaitForKey(string keyName, Action onInput)
         {
@@ -886,7 +1571,6 @@ namespace UltimateConsole
         }
 
         //borrowed from Stack Overflow
-        //
         private static char KeyToChar(Keys key)
         {
 
@@ -993,6 +1677,15 @@ namespace UltimateConsole
 
             if (StopOnError)
                 throw new LogErrorException(o.ToString());
+        }
+
+        #endregion
+
+        #region Strings
+
+        new public static string ToString()
+        {
+            return GetRange(new Point(0, 0), new Point(BufferSize));
         }
 
         #endregion

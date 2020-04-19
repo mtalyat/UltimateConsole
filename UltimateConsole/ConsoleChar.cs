@@ -11,13 +11,20 @@ namespace UltimateConsole
     {
         public char Char { get; set; }
         public Color Color { get; set; }
-        public bool Filled { get; set; }
+        public bool IsFilled { get; set; }
+        public bool IsVisible
+        {
+            get
+            {
+                return IsFilled && !char.IsWhiteSpace(Char) && Color.A > 0;
+            }
+        }
 
         public ConsoleChar(char c, Color color)
         {
             Char = c;
             Color = color;
-            Filled = false;
+            IsFilled = true;
         }
 
         public static implicit operator char(ConsoleChar c) => c.Char;
