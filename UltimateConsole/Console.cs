@@ -39,7 +39,8 @@ namespace UltimateConsole
             }
         }
 
-        public static bool ShowTitle { get; set; }
+        public static bool ShowTitle { get; set; } = true;
+        public static bool ShowFPS { get; set; } = false;
         public static bool AllowMinimize
         {
             get => buttons[B_MIN].Enabled;
@@ -60,7 +61,7 @@ namespace UltimateConsole
             get => buttons[B_SAV].Enabled;
             set => buttons[B_SAV].Enabled = value;
         }
-        public static bool AllowHighlight { get; set; }
+        public static bool AllowHighlight { get; set; } = true;
 
         //control box stuff
         public static bool IsControlBox { get; set; } = true;
@@ -1505,10 +1506,19 @@ namespace UltimateConsole
             }
 
             UpdateKeys();
+
+            frames++;
         }
 
         private static void Print(Graphics g)
         {
+            //FPS
+            if (ShowFPS)
+            {
+                string fps = FPS.ToString();
+                Draw(fps, bufferSize.Width - fps.Length, bufferSize.Height - 1);
+            }
+
             int height = FontHeight;
             int width = FontWidth;
 
