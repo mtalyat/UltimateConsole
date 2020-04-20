@@ -21,6 +21,24 @@ namespace UltimateConsole
         public static bool InstantWrite { get; set; } = true;
         public static int TabLength { get; set; } = 2;
 
+        private static bool drawMode = false;
+        public static bool DrawMode
+        {
+            get => drawMode;
+            set
+            {
+                drawMode = value;
+                IsControlBox = !value;
+                ClearAfterPrint = value;
+                HideKeyInput = value;
+                if (value)
+                    HideCursor();
+                else
+                    ShowCursor();
+                AllowHighlight = !value;
+            }
+        }
+
         public static bool ShowTitle { get; set; }
         public static bool AllowMinimize
         {
@@ -42,6 +60,7 @@ namespace UltimateConsole
             get => buttons[B_SAV].Enabled;
             set => buttons[B_SAV].Enabled = value;
         }
+        public static bool AllowHighlight { get; set; }
 
         //control box stuff
         public static bool IsControlBox { get; set; } = true;
@@ -84,7 +103,7 @@ namespace UltimateConsole
 
         private static ConsoleForm form;
 
-        public static bool IsFullScreen { get; private set; }
+        public static bool IsMaximized { get; private set; } = false;
 
         public static Color ForeColor { get; set; } = Color.White;
         public static Color BackColor { get; set; } = Color.Black;
@@ -189,6 +208,11 @@ namespace UltimateConsole
 
         public static string SavePath = "";
 
+        //FPS
+        public static int FPS { get; private set; } = 0;
+        private static int frames = 0;
+        private static Timer fpsTimer;
+
         static Console()
         {
             Initialize(new Size(70, 30));
@@ -211,7 +235,10 @@ namespace UltimateConsole
             cursorTimer = new Timer();
             cursorTimer.Interval = 1000;
             cursorTimer.Tick += CursorTimer_Tick;
-            cursorTimer.Start();
+
+            fpsTimer = new Timer();
+            fpsTimer.Interval = 1000;
+            fpsTimer.Tick += FpsTimer_Tick;
 
             TextCursor.Position = new Point(0, 0);
 
@@ -243,6 +270,9 @@ namespace UltimateConsole
             form.MouseLeave += Form_MouseLeave;
             form.MouseDown += Form_MouseDown;
             form.MouseUp += Form_MouseUp;
+
+            fpsTimer.Start();
+            cursorTimer.Start();
         }
 
         //make it so it pops up and stays up
@@ -451,16 +481,16 @@ namespace UltimateConsole
                     break;
             }
 
-            if (e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
+            if (AllowHighlight && e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
             {
                 if (IsHighlighting) Highlight(highlightStart, highlightEnd, false);
 
                 SetCursorPositionToPointerPosition();
 
                 highlightStart = GetIndex(TextCursor.Position);
-            }
 
-            Update();
+                Update();
+            }
         }
 
         private static void Form_MouseDown(object sender, MouseEventArgs e)
@@ -481,16 +511,16 @@ namespace UltimateConsole
                     break;
             }
 
-            if(e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
+            if(AllowHighlight && e.Button == System.Windows.Forms.MouseButtons.Left)//left click: highlight time
             {
                 if(IsHighlighting) Highlight(highlightStart, highlightEnd, false);
 
                 SetCursorPositionToPointerPosition();
 
                 highlightStart = GetIndex(TextCursor.Position);
-            }
 
-            Update();
+                Update();
+            }
         }
 
         private static void CursorTimer_Tick(object sender, EventArgs e)
@@ -498,6 +528,12 @@ namespace UltimateConsole
             TextCursor.Visible = !TextCursor.Visible;
 
             Update();
+        }
+
+        private static void FpsTimer_Tick(object sender, EventArgs e)
+        {
+            FPS = frames;
+            frames = 0;
         }
 
         private static void Form_MouseLeave(object sender, EventArgs e)
@@ -521,7 +557,7 @@ namespace UltimateConsole
                 PointerPosition = ScreenPositionToBufferPosition(e.Location, FontWidth / 2);
 
                 //if highlighting
-                if(e.Button == System.Windows.Forms.MouseButtons.Left && PointerPosition != OutOfView && highlightStart != OutOfRange)
+                if(AllowHighlight && e.Button == System.Windows.Forms.MouseButtons.Left && PointerPosition != OutOfView && highlightStart != OutOfRange)
                 {
                     SetCursorPositionToPointerPosition();
 
@@ -780,10 +816,12 @@ namespace UltimateConsole
             if (form.WindowState == FormWindowState.Maximized)
             {
                 form.WindowState = FormWindowState.Normal;
+                IsMaximized = false;
             }
             else
             {
                 form.WindowState = FormWindowState.Maximized;
+                IsMaximized = true;
             }
 
             FixBufferSize();
@@ -798,6 +836,15 @@ namespace UltimateConsole
                     form.Size.Width - (BorderWidth + RightMargin) - BUTTON_AMOUNT * ButtonWidth + i * ButtonWidth,
                     BorderWidth, ButtonWidth, FontHeight);
             }
+        }
+
+        public static void SetMargins(int m) => SetMargins(m, m, m, m);
+        public static void SetMargins(int left, int top, int right, int bottom)
+        {
+            LeftMargin = left;
+            TopMargin = top;
+            RightMargin = right;
+            BottomMargin = bottom;
         }
 
         #endregion
@@ -1244,6 +1291,8 @@ namespace UltimateConsole
 
         private static int FindFirstFilledFromLeft(int index)
         {
+            if (index < 0) return -1;
+
             for (int i = index; i < chars.Count; i++)
             {
                 if (chars[i].IsFilled) return i;
@@ -1463,16 +1512,19 @@ namespace UltimateConsole
             int height = FontHeight;
             int width = FontWidth;
 
-            //draw the border
-            using (Pen p = new Pen(BorderColor, BorderWidth))
+            //draw the border, if it exists
+            if (BorderWidth > 0)
             {
-                g.DrawRectangle(p, BorderWidth / 2, BorderWidth / 2, form.Size.Width - BorderWidth, form.Size.Height - BorderWidth);
-
-                if (IsControlBox)
+                using (Pen p = new Pen(BorderColor, BorderWidth))
                 {
-                    //extra border when control box, to outline the top
-                    int y = TopMargin + BorderWidth / 2;
-                    g.DrawLine(p, 0, y, form.Size.Width, y);
+                    g.DrawRectangle(p, BorderWidth / 2, BorderWidth / 2, form.Size.Width - BorderWidth, form.Size.Height - BorderWidth);
+
+                    if (IsControlBox)
+                    {
+                        //extra border when control box, to outline the top
+                        int y = TopMargin + BorderWidth / 2;
+                        g.DrawLine(p, 0, y, form.Size.Width, y);
+                    }
                 }
             }
 
@@ -1612,13 +1664,13 @@ namespace UltimateConsole
             newKeyStates.Clear();
         }
 
-        public static bool IsKeyDown(Keys key) => IsKeyDown(key.ToString());
+        //public static bool IsKeyDown(Keys key) => IsKeyDown(key.ToString());
         public static bool IsKeyDown(string keyName)
         {
             return keyStates.ContainsKey(keyName) && keyStates[keyName] == KeyStates.Down;
         }
 
-        public static bool IsKeyPressed(Keys key) => IsKeyPressed(key.ToString());
+        //public static bool IsKeyPressed(Keys key) => IsKeyPressed(key.ToString());
         public static bool IsKeyPressed(string keyName)
         {
             return keyStates.ContainsKey(keyName) && (
@@ -1626,7 +1678,7 @@ namespace UltimateConsole
                 keyStates[keyName] == KeyStates.Down);
         }
 
-        public static bool IsKeyUp(Keys key) => IsKeyUp(key.ToString());
+        //public static bool IsKeyUp(Keys key) => IsKeyUp(key.ToString());
         public static bool IsKeyUp(string keyName)
         {
             return keyStates.ContainsKey(keyName) && keyStates[keyName] == KeyStates.Up;
@@ -1658,8 +1710,8 @@ namespace UltimateConsole
         private static char KeyToChar(Keys key)
         {
 
-            if (IsKeyPressed(Keys.Alt) ||
-                IsKeyPressed(Keys.Control))
+            if (IsKeyPressed(Keys.Alt.ToString()) ||
+                IsKeyPressed(Keys.Control.ToString()))
             {
                 return '\x00';
             }
