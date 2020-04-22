@@ -1470,11 +1470,6 @@ namespace UltimateConsole
             int startIndex = Math.Max(0, -left);
             int destinationStart = Math.Max(0, left - startIndex);
 
-            Log(startIndex);
-            Log(destinationStart);
-            Log(Math.Min(length - startIndex, bufferSize.Width - destinationStart));
-            Log("");
-
             Copy(arr, startIndex, GetIndex(destinationStart, top), Math.Min(length - startIndex, bufferSize.Width - destinationStart));
         }
 
